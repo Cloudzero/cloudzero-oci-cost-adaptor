@@ -1,0 +1,5 @@
+pandas
+oci
+boto3
+s3fs
+python-dateutil
