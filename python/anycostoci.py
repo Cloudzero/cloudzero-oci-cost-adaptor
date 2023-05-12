@@ -189,8 +189,8 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                         cbf_frame.insert(len(cbf_frame.columns), tag_column, oci_cost.loc[:, c])
 
                 # Synthesized tag for account name
-                cbf_frame.insert(len(cbf_frame.columns), 'resource/tag:tenancy_name', oci_cost.loc[:, 'lineItem/tenantId'])
-                cbf_frame['resource/tag:tenancy_name'] = cbf_frame['resource/tag:tenancy_name'].map(lambda t:__tenancy_name_lookup(t, oci_config))
+                cbf_frame.insert(len(cbf_frame.columns), 'resource/tag:oci_tenancy_name', oci_cost.loc[:, 'lineItem/tenantId'])
+                cbf_frame['resource/tag:oci_tenancy_name'] = cbf_frame['resource/tag:oci_tenancy_name'].map(lambda t:__tenancy_name_lookup(t, oci_config))
 
                 # This section prunes the CBF frames to contain only rows with
                 # usage_start dates within the BDID boundary.
