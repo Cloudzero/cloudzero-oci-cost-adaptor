@@ -13,6 +13,8 @@ import os
 import gzip
 import pandas
 
+tenancy_id_cache = {}
+
 def __create_or_verify_bdid_folder(start_date: datetime, output_dir: str, drop_id: str):
     # Snap to the first of the month that start_date is in
     first_of_the_month = start_date.replace(day=1)
@@ -51,11 +53,33 @@ def __months_lookback(lookback_months: int) -> dict:
     print(f"Eval dates: {start_date} to {end_date}")
     return start_date, end_date
 
+def __tenancy_name_lookup(tenancy_id: str, oci_config) -> str:
+    """Look up a tenancy name by ID, caching the result"""
+    # print(f"Entering tenancy name lookup for ID {tenancy_id}")
+    tenancy_name = tenancy_id_cache.get(tenancy_id)
+    if tenancy_name != None:
+        # print(f"Found tenancy name {tenancy_name}")
+        return tenancy_name
+    
+    try:
+        oci.config.validate_config(oci_config)
+        iam = oci.identity.IdentityClient(oci_config)
+        # print(f"Tenant ID {tenancy_id} was uncached, making API call...")
+        get_tenancy_response = iam.get_tenancy(tenancy_id)
+        tenancy_name = get_tenancy_response.data.name
+        tenancy_id_cache[tenancy_id] = tenancy_name
+        # print(f"Tenant ID {tenancy_id} lookup success, name was {tenancy_name}")
+    except oci.exceptions.ServiceError:
+        # print(f"Tenant ID {tenancy_id} lookup failed, setting empty")
+        tenancy_name = ""
+        tenancy_id_cache[tenancy_id] = tenancy_name
+
+    return tenancy_name
 
 # 0 lookback starts from first of current month to today
 # 1 lookback starts from 1st of previous month to last day of previous month
 # 2 lookback starts from 1st of next-previous month to last day of that month
-def download_oci_cost_files(lookback_months: int, oci_config = {}, output_dir = '/tmp/' ) -> slice:
+def download_oci_cost_files(lookback_months: int, oci_config, output_dir = '/tmp/' ) -> slice:
     """Download OCI cost reports between start_date and end_date. Returns slice of downloaded filenames on success."""
     oci.config.validate_config(oci_config)
 
@@ -92,6 +116,7 @@ def download_oci_cost_files(lookback_months: int, oci_config = {}, output_dir = 
     return downloaded_reports
 
 def build_anycost_drop_from_oci_files(lookback_months: int,
+                                      oci_config,
                                       oci_cost_files_dir = '/tmp/', 
                                       output_dir = '/tmp/anycost_drop/') -> slice:
     """Take a directory of gzipped OCI cost reports and build an AnyCost drop out of them.
@@ -102,6 +127,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
 
     Returns a set of paths to created billing data ID folders under output_dir
     """
+    oci.config.validate_config(oci_config)
     # CBF drop folder structure is like:
     # output_dir/<billing_data_id>/<drop_id>/<data_file>
     # Ex:
@@ -130,6 +156,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                 # Start building the CBF formatted frame
                 cbf_frame = pandas.DataFrame([])
 
+
                 cbf_frame.insert(0, 'lineitem/id', oci_cost.loc[:, 'lineItem/referenceNo'])
                 # AFAICT all cost types in OCI are 'Usage', with the possible
                 # exception of 'Adjustment's for rows with isCorrection=True.
@@ -147,7 +174,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                 cbf_frame.insert(10, 'usage/amount', oci_cost.loc[:, 'usage/billedQuantity'])
                 cbf_frame.insert(11, 'cost/cost', oci_cost.loc[:, 'cost/myCost'])
 
-                #Tags
+                # Resource Tags
                 for c in oci_cost.columns:
                     match = re.match('^tags\/(?P<tag_key>.*)', c)
                     if match:
@@ -160,6 +187,10 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
 
                         tag_column = "resource/tag:" + oci_tag_key_cleaned
                         cbf_frame.insert(len(cbf_frame.columns), tag_column, oci_cost.loc[:, c])
+
+                # Synthesized tag for account name
+                cbf_frame.insert(len(cbf_frame.columns), 'resource/tag:tenancy_name', oci_cost.loc[:, 'lineItem/tenantId'])
+                cbf_frame['resource/tag:tenancy_name'] = cbf_frame['resource/tag:tenancy_name'].map(lambda t:__tenancy_name_lookup(t, oci_config))
 
                 # This section prunes the CBF frames to contain only rows with
                 # usage_start dates within the BDID boundary.
