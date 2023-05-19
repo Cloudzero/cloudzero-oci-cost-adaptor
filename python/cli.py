@@ -37,8 +37,7 @@ args = parser.parse_args()
 
 print(f"Args given: {args}")
 
-# temp_dir = tempfile.TemporaryDirectory(dir=args.temp_dir)
-temp_dir = '/tmp/'
+temp_dir = args.temp_dir
 
 # Filesystem sanity check
 try:
@@ -58,14 +57,14 @@ oci_config = oci.config.from_file(oci_file, oci.config.DEFAULT_PROFILE)
 print(f"OCI Config: {oci_config}")
 
 downloaded_reports = anycostoci.download_oci_cost_files(
-                        args.lookback_months, 
+                        args.lookback_months,
                         oci_config = oci_config,
                         output_dir = oci_write_dir)
 
 output_paths = anycostoci.build_anycost_drop_from_oci_files(
-  args.lookback_months, 
+  args.lookback_months,
   oci_config,
-  oci_cost_files_dir = oci_write_dir, 
+  oci_cost_files_dir = oci_write_dir,
   output_dir = anycost_drop_dir
 )
 
