@@ -42,7 +42,7 @@ def anycost(event, context):
     cbf_s3_prefix = ssm.get_parameter(Name=params_path+'s3-bucket-prefix')['Parameter']['Value']
 
     # Check event arguments
-    lookback_months = 1
+    lookback_months = 0
     if 'lookback_months' in event:
         lookback_months = event['lookback_months']
     print(f"Looking back {lookback_months} months ago")
