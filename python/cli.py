@@ -17,21 +17,21 @@ import anycostoci
 
 parser = argparse.ArgumentParser()
 
-# AnyCost side configuration, for writing to s3
-parser.add_argument("-aki", "--access-key-id")
-parser.add_argument("-sak", "--secret-access-key")
-parser.add_argument("-b", "--anycost-s3-bucket")
-
-# OCI side configuration, where is my config file
+# OCI configuration: where is my config file
 # Config should contain user OCID, tenancy OCID, and keyfile location
-parser.add_argument("-o", "--oci-config-file")
+parser.add_argument("-o", "--oci-config-file", 
+                    default=oci.config.DEFAULT_LOCATION,
+                    help = 'OCI config file location. Default: %(default)s')
 
 # Temp dir stores the OCI cost files, output is the actual drop.
-parser.add_argument("-t", "--temp-dir", default="/tmp/")
-parser.add_argument("-d", "--output-dir", default="/tmp/anycost_drop")
+parser.add_argument("-t", "--temp-dir", default="/tmp/",
+                    help = 'Temp dir for OCI cost files. Default: %(default)s')
+parser.add_argument("-d", "--output-dir", default="/tmp/anycost_drop",
+                    help = 'Output dir for AnyCost drop files. Must not exist. Default: %(default)s')
 
 # Months of history to evaluate and store in AnyCost drop
-parser.add_argument("-m", "--lookback-months", default=1, type=int)
+parser.add_argument("-m", "--lookback-months", default=1, type=int,
+                    help = 'Months of history to download. Use 0 to get the current month, 1 for the previous, etc. Default: %(default)s')
 
 args = parser.parse_args()
 
@@ -50,14 +50,10 @@ except FileExistsError as fee:
   print(f"Path exists: {anycost_drop_dir}")
   exit(1)
 
-oci_file = ""
-if args.oci_config_file == None:
-    oci_file = oci.config.DEFAULT_LOCATION
-else:
-    oci_file = args.oci_config_file
 
 # Hydrate OCI config and download --lookback-months worth of cost files
-
+  
+oci_file = args.oci_config_file
 oci_config = oci.config.from_file(oci_file, oci.config.DEFAULT_PROFILE)
 print(f"OCI Config: {oci_config}")
 
