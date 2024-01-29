@@ -127,6 +127,10 @@ For example, cost data files for January will continue to flow into the OCI obje
 
 Additional runs that pick up no new data do not affect accuracy, they merely incur processing cost.
 
+### Output Notes
+
+OCI billing output doesn't necessarily map cleanly to every CBF field. Some special handling of OCI-specific tenancy and account properties are represented as synthesized resource tags. For details, see [OCI/CBF Field Mappings](OCI-CBF-TABLE.md).
+
 ## Contributing
 
 We appreciate feedback and contribution to this repo! Before you get started, please see the following:

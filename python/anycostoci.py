@@ -166,8 +166,8 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                 cbf_frame.insert(0, 'lineitem/id', oci_cost.loc[:, 'lineItem/referenceNo'])
                 # AFAICT all cost types in OCI are 'Usage', with the possible
                 # exception of 'Adjustment's for rows with isCorrection=True.
-                # Depending on how corrections are handled we may not need
-                # to show that.
+                # However, Adjustments just emit the corrected cost, not the 
+                # offset. So we'll just call everything Usage.
                 cbf_frame.insert(1, 'lineitem/type', 'Usage')
                 cbf_frame.insert(2, 'lineitem/description', oci_cost.loc[:, 'product/Description'])
                 cbf_frame.insert(3, 'time/usage_start', oci_cost.loc[:, 'lineItem/intervalUsageStart'])
