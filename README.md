@@ -23,8 +23,6 @@ Requirements:
 
 ## Table of Contents
 
-TODO: Make sure this is updated based on the sections included:
-
 * [Documentation](#documentation)
 * [Setup](#setup)
 * [Contributing](#contributing)
