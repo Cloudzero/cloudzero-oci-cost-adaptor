@@ -13,12 +13,14 @@ import os
 import gzip
 import pandas
 
+tenancy_id_cache = {}
+
 def __create_or_verify_bdid_folder(start_date: datetime, output_dir: str, drop_id: str):
     # Snap to the first of the month that start_date is in
     first_of_the_month = start_date.replace(day=1)
     # Calculate the last date of that month
     last_date_of_the_month = calendar.monthrange(start_date.year, start_date.month)[1]
-    # Make a datetime for that last date. 
+    # Make a datetime for that last date.
     last_of_the_month = start_date.replace(day=last_date_of_the_month)
     # Add 1 day to get the first of the next month
     first_of_next_month = last_of_the_month + timedelta(days=1)
@@ -44,18 +46,45 @@ def __months_lookback(lookback_months: int) -> dict:
     start_date = datetime.utcnow().date() - dateutil.relativedelta.relativedelta(months=lookback_months)
     start_date = start_date.replace(day=1)
 
-    # end_date = datetime.utcnow().date() - dateutil.relativedelta.relativedelta(months=1)
     last_day_of_the_month = calendar.monthrange(start_date.year, start_date.month)[1]
     end_date = start_date.replace(day=last_day_of_the_month)
 
     print(f"Eval dates: {start_date} to {end_date}")
     return start_date, end_date
 
+def __tenancy_name_lookup(tenancy_id: str, oci_config) -> str:
+    """Look up a tenancy name by ID, caching the result"""
+    tenancy_name = tenancy_id_cache.get(tenancy_id)
+    if tenancy_name != None:
+        # print(f"Found cached tenancy name {tenancy_name}")
+        return tenancy_name
+
+    try:
+        print(f"Tenant ID {tenancy_id} was uncached, making API call...")
+
+        oci.config.validate_config(oci_config)
+        org = oci.tenant_manager_control_plane.OrganizationClient(oci_config)
+
+        # Get the organization OCID of the client
+        get_org_response = org.list_organizations(oci_config['tenancy'])
+        org_ocid = get_org_response.data.items[0].id
+
+        # Get the tenancy given the org OCID and return the name
+        get_tenancy_response = org.get_organization_tenancy(org_ocid, tenancy_id)
+        tenancy_name = get_tenancy_response.data.name
+        tenancy_id_cache[tenancy_id] = tenancy_name
+        print(f"Tenant ID {tenancy_id} lookup success, name was {tenancy_name}")
+    except oci.exceptions.ServiceError:
+        print(f"Tenant ID {tenancy_id} lookup failed, setting name to empty string")
+        tenancy_name = ""
+        tenancy_id_cache[tenancy_id] = tenancy_name
+
+    return tenancy_name
 
 # 0 lookback starts from first of current month to today
 # 1 lookback starts from 1st of previous month to last day of previous month
 # 2 lookback starts from 1st of next-previous month to last day of that month
-def download_oci_cost_files(lookback_months: int, oci_config = {}, output_dir = '/tmp/' ) -> slice:
+def download_oci_cost_files(lookback_months: int, oci_config, output_dir = '/tmp/' ) -> slice:
     """Download OCI cost reports between start_date and end_date. Returns slice of downloaded filenames on success."""
     oci.config.validate_config(oci_config)
 
@@ -66,7 +95,8 @@ def download_oci_cost_files(lookback_months: int, oci_config = {}, output_dir = 
     # following month.
     report_end_date = end_date + timedelta(days=3)
 
-    # TODO: the point of pagination is to make repeated calls. Push this paginating into the fetch/comparison loop function
+    # TODO: the point of pagination is to make repeated calls. 
+    # Push this paginating into the fetch/comparison loop function
     report_bucket_objects = oci.pagination.list_call_get_all_results(
                             object_storage.list_objects,
                             'bling',
@@ -92,7 +122,8 @@ def download_oci_cost_files(lookback_months: int, oci_config = {}, output_dir = 
     return downloaded_reports
 
 def build_anycost_drop_from_oci_files(lookback_months: int,
-                                      oci_cost_files_dir = '/tmp/', 
+                                      oci_config,
+                                      oci_cost_files_dir = '/tmp/',
                                       output_dir = '/tmp/anycost_drop/') -> slice:
     """Take a directory of gzipped OCI cost reports and build an AnyCost drop out of them.
 
@@ -102,6 +133,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
 
     Returns a set of paths to created billing data ID folders under output_dir
     """
+    oci.config.validate_config(oci_config)
     # CBF drop folder structure is like:
     # output_dir/<billing_data_id>/<drop_id>/<data_file>
     # Ex:
@@ -114,9 +146,9 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
     drop_paths = set()
 
     for root, dirs, cost_files in os.walk(oci_cost_files_dir):
-        # It would be swell if this yielded the files in order. 
+        # It would be swell if this yielded the files in order.
         # The filenames are ordered numbers and we could display progress
-        for cost_file in cost_files: 
+        for cost_file in cost_files:
             if not re.match(".*\.csv\.gz$", cost_file):
                 continue
 
@@ -126,15 +158,16 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                     oci_cost = pandas.read_csv(f)
                 except pandas.errors.EmptyDataError:
                     print(f"No rows read from file {root}/{cost_file}")
-                    
+
                 # Start building the CBF formatted frame
                 cbf_frame = pandas.DataFrame([])
+
 
                 cbf_frame.insert(0, 'lineitem/id', oci_cost.loc[:, 'lineItem/referenceNo'])
                 # AFAICT all cost types in OCI are 'Usage', with the possible
                 # exception of 'Adjustment's for rows with isCorrection=True.
-                # Depending on how corrections are handled we may not need
-                # to show that.
+                # However, Adjustments just emit the corrected cost, not the 
+                # offset. So we'll just call everything Usage.
                 cbf_frame.insert(1, 'lineitem/type', 'Usage')
                 cbf_frame.insert(2, 'lineitem/description', oci_cost.loc[:, 'product/Description'])
                 cbf_frame.insert(3, 'time/usage_start', oci_cost.loc[:, 'lineItem/intervalUsageStart'])
@@ -147,7 +180,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                 cbf_frame.insert(10, 'usage/amount', oci_cost.loc[:, 'usage/billedQuantity'])
                 cbf_frame.insert(11, 'cost/cost', oci_cost.loc[:, 'cost/myCost'])
 
-                #Tags
+                # Resource Tags
                 for c in oci_cost.columns:
                     match = re.match('^tags\/(?P<tag_key>.*)', c)
                     if match:
@@ -161,6 +194,30 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                         tag_column = "resource/tag:" + oci_tag_key_cleaned
                         cbf_frame.insert(len(cbf_frame.columns), tag_column, oci_cost.loc[:, c])
 
+                # Synthesized Tags
+                # Tenancy Name
+                cbf_frame.insert(
+                    len(cbf_frame.columns), 
+                    'resource/tag:oci_tenancy_name',
+                    oci_cost.loc[:, 'lineItem/tenantId']
+                )
+                cbf_frame['resource/tag:oci_tenancy_name'] = cbf_frame['resource/tag:oci_tenancy_name'].map(
+                    lambda t:__tenancy_name_lookup(t, oci_config)
+                )
+                # Compartment Name
+                cbf_frame.insert(len(cbf_frame.columns),
+                                 "resource/tag:oci_compartment_name",
+                                 oci_cost.loc[:, "product/compartmentName"])
+                # Compartment ID
+                cbf_frame.insert(len(cbf_frame.columns),
+                                 "resource/tag:oci_compartment_id",
+                                 oci_cost.loc[:, "product/compartmentId"])
+                # Availability Domain
+                cbf_frame.insert(len(cbf_frame.columns),
+                                 "resource/tag:oci_availability_domain",
+                                 oci_cost.loc[:, "product/availabilityDomain"])
+
+
                 # This section prunes the CBF frames to contain only rows with
                 # usage_start dates within the BDID boundary.
 
@@ -169,7 +226,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                 cbf_frame['time/usage_end']   = pandas.to_datetime(cbf_frame['time/usage_end'], cache=True)
 
                 # Create new date-only timestamp columns so we can look at those for pruning
-                # note the .dt property refers to the datetime object inside the column 
+                # note the .dt property refers to the datetime object inside the column
                 cbf_frame['time/usage_start_date'] = cbf_frame['time/usage_start'].dt.date
                 cbf_frame['time/usage_end_date']   = cbf_frame['time/usage_end'].dt.date
 
@@ -178,10 +235,10 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                 # every row to see whether it belongs within the window.
                 if start_date: # conditional here since @start_date is inside the string
                     cbf_frame.query('`time/usage_start_date` >= @start_date', inplace=True)
-                
+
                 if end_date:
                     cbf_frame.query('`time/usage_start_date` <= @end_date', inplace=True)
-                
+
                 # Finally, let's drop the _date columns since they don't belong
                 # in the output.
                 cbf_frame.drop(columns=['time/usage_start_date', 'time/usage_end_date'], inplace=True)
@@ -197,7 +254,7 @@ def build_anycost_drop_from_oci_files(lookback_months: int,
                     print(f"No rows remaining after date window prune in file {cost_file}")
 
     # Emit manifest pointing at our current drop.
-    # There should only be 1, despite the for statement. 
+    # There should only be 1, despite the for statement.
     for d in drop_paths:
         manifest = {
             "version": "1.0.0",

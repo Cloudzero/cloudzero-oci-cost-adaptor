@@ -62,7 +62,8 @@ def anycost(event, context):
         )
 
         output_drops = anycostoci.build_anycost_drop_from_oci_files(
-            lookback_months = lookback_months,
+            lookback_months,
+            oci_config,
             oci_cost_files_dir = oci_write_dir,
             output_dir = anycost_drop_dir,
         )
